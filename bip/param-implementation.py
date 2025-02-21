@@ -6,91 +6,129 @@ Created on Fri Feb 21 01:01:39 2025
 @author: vigneshsomjit
 """
 from typing import Any
+import numpy as np
 
-class ParamInfo: 
+class ParamInfo:
     """
-    Encapsulates metadata for a parameter. 
+    Encapsulates metadata for a parameter.
     """
-    def __init__(self, 
-                 name: str, 
-                 param_type: str, 
-                 constraints: dict, 
+    def __init__(self,
+                 name: str,
+                 param_type: str,
+                 constraints: dict,
                  shape: int | tuple[int, ...]):
         """
         name: Name of the parameter.
         param_type: Type of the parameter (e.g. 'float', 'int', 'categorical', etc.).
         constraints: Dictionary of constraints (e.g. {'min': 0.0, 'max': 10.0}).
-        shape: Expected shape of the parameter. 
+        shape: Expected shape of the parameter.
         """
-        self.name = name 
+        self.name = name
         self.param_type = param_type
         self.constraints = constraints
         self.shape = shape
-        
+
+
+class ParamGroup:
+    """
+    A container class that holds a collection of parameters (both their metadata
+    and values).
+
+    Each parameter is stored as a key-value pair, where:
+        - The key is the parameter's name
+        - The value is a `ParamInfo` object storing the parameter metadata.
+    """
+
+    def __init__(self, param_info: Dict):
+        """
+
+        Parameters
+        ----------
+        param_info : `Dict`
+            Dictionary of information for all parameters in the group. Keys are
+            parameter names and values are themselves dictionaries. The inner
+            dictionaries must have keys "type", "constraint", "size".
+        """
+        self._param_info = param_info
+
+    def get_param_names(self, include_arr_names=False) -> list[str]:
+        """ Return list of parameter names in alphabetical order.
+
+        Parameters
+        ----------
+        include_arr_names : `bool`
+            If False, then list consists of the set of keys in `self.param_info`.
+            If `include_arr_names` is True then the individual elements of
+            array-valued parameters are included.
+        """
+        if include_arr_names:
+            raise NotImplementedError()
+        else:
+            return sorted(self._param_info.keys())
+
+    def add_param(self, param_name: str, param_info: Dict):
+        """ Add a single new parameter to the group.
+
+        Parameters
+        ----------
+        param_name : `str`
+            The new parameter name.
+        param_info : `Dict`
+            The parameter information dictionary for a new parameter.
+        """
+        if param_name in self._param_info.keys():
+            raise KeyError(f"Parameter {param_name} already exists in the group.")
+        self.param_info.update(param_name=param_info)
+
+    def remove_param(self, param_names: str | list | tuple):
+        """ Remove one or more parameters from the group by name.
+
+        Parameters
+        ----------
+        param_names : `str`, `list`, or `tuple`
+            The parameter name(s) to remove.
+        """
+        if isinstance(param_names, str):
+            param_names = [param_names]  # Convert to list
+
+        if not isinstance(param_names, (list, tuple)):
+            raise TypeError("param_names must be a string, list, or tuple.")
+
+        for param_name in param_names:
+            self._param_info.pop(param_name)
+
+
 class ParamValue:
     """
     Encapsulates the actual value that a parameter can assume.
     """
-    def __init__(self, 
-                 param_info: ParamInfo,
-                 value):
-        
-        self.param_info = param_info
-        self._value = value 
-        
-        @property 
-        def value(self) -> Any :
-            return self._value 
-        
-        @value.setter 
-        def setter(self, new_value: Any):
-            self._value = new_value
+    def __init__(self, param: ParamGroup, val: Dict = None): #
+        """
 
-class ParamGroup:
-    """
-    A container class that holds a collection of parameters (both their metadata and values).
-    
-    Each parameter is stored as a key-value pair, where: 
-        - The key is the parameter's name
-        - The value is a `ParamValue` object representing the parameter's current value
-    """
-    def __init__(self):
+        Parameters
+        ----------
+        param : `ParamGroup`
+            Instance of ParamGroup class, defining the parameter structure.
+        val : `Dict`
+            Dictionary storing the values. Keys are parameter names and values
+            are the parameter values.
         """
-        Initialize any empty parameter group (i.e. dictionary).
-        """
-        self._params = {}
-        
-    def add_parameter(self, param_info: ParamInfo, initial_value: Any):
-        """
-        Add a new parameter to the group.
-        param_info: An instance of ParamInfo describing the parameter's metadata
-        initial_value: The initial value assigned to that parameter 
-        """
-        if param_info.name in self._params:
-            raise KeyError(f"Parameter '{param_info.name}' already exists in the group.")
-        self._params[param_info.name] = ParamValue(value = initial_value, param_info = param_info)
-    
-    def remove_parameter(self, param_names: str | list | tuple):
-        """
-        Remove a parameter from the group by its name.
-        """
-        if isinstance(param_names, str):
-            param_names = [param_names]  # Convert to string 
-    
-        if not isinstance(param_names, (list, tuple)):
-            raise TypeError("param_names must be a string, list, or tuple.")
-    
-        for param_name in param_names:
-            if param_name not in self._params:
-                raise KeyError(f"No parameter named '{param_name}' in this group.")
-            del self._params[param_name]
-    
-    def get_names(self) -> list[str]:
-        """
-        List the names of all parameters in the group.
-        """
-        return list(self._params.keys())
+        self.param = param
+        self.value = val
 
-    
-    
-        
+    @property
+    def value(self) -> Any :
+        return self._value
+
+    @value.setter
+    def value(self, val: Any):
+        # TODO: add checks here for param type/size/constraints. Should
+        # probably allow `val` to be None as well.
+        self._value = val
+
+    @value.deleter
+    def value(self):
+        del self._value
+
+    def to_array():
+        raise NotImplementedError()
