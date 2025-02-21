@@ -8,6 +8,7 @@ Created on Fri Feb 21 01:01:39 2025
 from typing import Any
 import numpy as np
 
+'''
 class ParamInfo:
     """
     Encapsulates metadata for a parameter.
@@ -27,7 +28,7 @@ class ParamInfo:
         self.param_type = param_type
         self.constraints = constraints
         self.shape = shape
-
+'''
 
 class ParamGroup:
     """
@@ -39,7 +40,7 @@ class ParamGroup:
         - The value is a `ParamInfo` object storing the parameter metadata.
     """
 
-    def __init__(self, param_info: Dict):
+    def __init__(self, param_info):
         """
 
         Parameters
@@ -64,9 +65,9 @@ class ParamGroup:
         if include_arr_names:
             raise NotImplementedError()
         else:
-            return sorted(self._param_info.keys())
+            return sorted(list(self._param_info.keys()))
 
-    def add_param(self, param_name: str, param_info: Dict):
+    def add_param(self, param_name: str, param_info):
         """ Add a single new parameter to the group.
 
         Parameters
@@ -78,7 +79,7 @@ class ParamGroup:
         """
         if param_name in self._param_info.keys():
             raise KeyError(f"Parameter {param_name} already exists in the group.")
-        self.param_info.update(param_name=param_info)
+        self._param_info.update([(param_name, param_info)])
 
     def remove_param(self, param_names: str | list | tuple):
         """ Remove one or more parameters from the group by name.
@@ -102,7 +103,7 @@ class ParamValue:
     """
     Encapsulates the actual value that a parameter can assume.
     """
-    def __init__(self, param: ParamGroup, val: Dict = None): #
+    def __init__(self, param: ParamGroup, val=None): #
         """
 
         Parameters
