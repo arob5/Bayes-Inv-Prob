@@ -217,7 +217,7 @@ class ParamInfo:
 
 class ParamGroup:
     """
-    Holds a collection of parameters (both their metadata and values).
+    Encapsulates the metadata of parameters.
     """
 
     def __init__(self, param_info):
@@ -228,23 +228,23 @@ class ParamGroup:
         param_info : `Dict`
             Nested dictionary storing information for all parameters in the group.
             Outer keys are parameter names and values are dictionaries containing
-            paramater metadata. The inner keys must have "type", "constraint", "size".
+            paramater metadata. The inner keys must have "type", "constraint", "shape".
         """
-        self.param_info = copy.deepcopy(param_info) # Prevent unintended changes
+        self._param_info = param_info 
 
-    def get_param_names(self, include_arr_names=False):
+    def get_param_names(self, flatten=False):
         """ Return list of parameter names in alphabetical order.
 
         Parameters
         ----------
         include_arr_names : `bool`
-            If False, then list consists of the set of keys in `self.param_info`.
+            If False, then list consists of the set of keys in `self._param_info`.
             If True, then the individual elements of array-valued parameters are included.
         """
-        if include_arr_names:
+        if flatten:
             raise NotImplementedError()
         else:
-            return sorted(list(self.param_info.keys()))
+            return sorted(list(self._param_info.keys()))
 
     def add_param(self, param_name, param_metadata):
         """ Add a single new parameter to the group.
@@ -256,9 +256,9 @@ class ParamGroup:
         param_metadata : `Dict`
             The parameter information dictionary for a new parameter.
         """
-        if param_name in self.param_info:
+        if param_name in self._param_info:
             raise KeyError(f"Parameter '{param_name}' already exists in the group.")
-        self.param_info[param_name] = param_metadata
+        self._param_info[param_name] = param_metadata
 
     def remove_param(self, param_names):
         """ Remove one or more parameters from the group by name.
@@ -275,9 +275,9 @@ class ParamGroup:
             raise TypeError("param_names must be a string, list, or tuple.")
 
         for param_name in param_names:
-            if param_name not in self.param_info:
+            if param_name not in self._param_info:
                 raise KeyError(f"Parameter '{param_name}' does not exist in the group.")
-            self.param_info.pop(param_name)
+            self._param_info.pop(param_name)
 
 
 
@@ -297,7 +297,7 @@ class ParamValue:
             Dictionary storing the initial values. Keys are parameter names and
             values are the parameter values.
         """
-        self.param = param
+        self.param_group = param
         self._value = {} # Initialize internal storage of parameter values
 
         if init_values is not None:
@@ -333,23 +333,23 @@ class ParamValue:
             raise TypeError(f"Parameter '{name}' should be of type {expected_type}, got {type(value)}")
 
     @staticmethod
-    def _validate_shape(name, value, expected_size):
+    def _validate_shape(name, value, expected_shape):
         """
         Validates the shape of the parameter value: vector or scalar? If the value
         is a single element numpy array for a scalar parameter, it converts it to a float.
         """
 
         # Vector paramater
-        if isinstance(expected_size, tuple):
+        if isinstance(expected_shape, tuple):
             if not isinstance(value, np.ndarray):
                 raise TypeError(f"Parameter '{name}' should be a numpy array.")
-            if value.shape != expected_size:
+            if value.shape != expected_shape:
                 raise ValueError(
-                    f"Parameter '{name}' has incorrect shape. Expected {expected_size} but got {value.shape}."
+                    f"Parameter '{name}' has incorrect shape. Expected {expected_shape} but got {value.shape}."
                     )
 
         # Scalar paramater
-        elif isinstance(expected_size, int):
+        elif isinstance(expected_shape, int):
             if isinstance(value, np.ndarray):
                 if value.shape == (1,):
                     # Convert single-element numpy array to scalar
@@ -402,7 +402,7 @@ class ParamValue:
         candidate_values : dict
             Dictionary of parameter values to be validated before assignment.
         """
-        expected_names = set(self.param.param_info.keys())
+        expected_names = set(self.param_group.param_info.keys())
         candidate_names = set(candidate_values.keys()) # Names in user-provided dict
 
         self._validate_keys(expected_names, candidate_names)
@@ -411,18 +411,18 @@ class ParamValue:
         for name, value in candidate_values.items():
 
             # Validate names
-            if name not in self.param.param_info:
+            if name not in self.param_group.param_info:
                 raise KeyError(f"Parameter '{name}' metadata not found.")
 
-            param_meta = self.param.param_info[name] # Extract metadata of parameter
+            param_meta = self.param_group.param_info[name] # Extract metadata of parameter
 
             # Validate type
             expected_type = param_meta["type"]
             self._validate_type(name, value, expected_type)
 
             # Validate shape and possibly convert single-element arrays to scalars
-            expected_size = param_meta["size"]
-            value = self._validate_shape(name, value, expected_size)
+            expected_shape = param_meta["shape"]
+            value = self._validate_shape(name, value, expected_shape)
 
             # Validate constraints
             constraints = param_meta.get("constraint", {})
