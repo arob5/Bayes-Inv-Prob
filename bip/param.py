@@ -32,12 +32,17 @@ NoConstraint = object.__new__(_NoConstraintType)
 
 class ParamInfo:
     """
-    Encapsulates metadata for a parameter.
+    This class encapsulates metadata for a parameter, which includes its type,
+    shape, and constraints. It ensures that parameters conform to specified rules 
+    and enforces cross-parameter consistency. 
+    
+    `ParamInfo` objects are used when creating an instance of the `ParamGroup`
+    class. 
     """
     def __init__(self,
                  value_type: str,
-                 shape: tuple[()] | tuple[int, ...], # TODO: and this one
-                 constraint: str | tuple[int|None,int|None]): # TODO: need to check this type hint is correct.
+                 shape: tuple[()] | tuple[int, ...], 
+                 constraint: str | tuple[int | None, int | None]): 
         """
 
         Parameters
@@ -213,60 +218,130 @@ class ParamInfo:
             return False
 
         return shape[0] == shape[1]
+    
+    
+    def __eq__(self, other):
+        """
+        Overloads the '==' operator to test for equality between two ParamInfo objects.
+    
+        Two ParamInfo objects are considered equal if:
+            1) They have the same `value_type`.
+            2) They have the same `shape`.
+            3) They have the same `constraint`.
+    
+        Parameters
+        ----------
+        other : `ParamInfo`
+            Another ParamInfo instance to compare against.
+    
+        """
+        if not isinstance(other, ParamInfo):
+            return NotImplemented  # Return False if not ParamInfo object 
+    
+        return (self.value_type == other.value_type and
+                self.shape == other.shape and
+                self.constraint == other.constraint)
+
 
 
 class ParamGroup:
     """
-    Encapsulates the metadata of parameters.
+    This is a container class that holds multiple parameter name-metadata pairs
+    and provides functionality to view, add, and delete parameters.
+        
     """
 
-    def __init__(self, param_info):
+    def __init__(self, param_group: dict[str, ParamInfo]):
         """
+        Parameters
+        ----------
+        params : dict
+            Dictionary storing the name-metadata pairing of all the parameters 
+            in the group. The keys are the parameter names and the values 
+            are `ParamInfo` objects. 
+            
+        Raises 
+        ------
+        TypeError
+            If `param_group` is not a dictionary with string keys and `ParamInfo` values. 
+        """
+        if not isinstance(param_group, dict):
+            raise TypeError("param_group must be a dictionary.")
+    
+        for key, value in param_group.items():
+            if not isinstance(key, str):
+                raise TypeError(
+                    f"Invalid key '{key}': keys must be strings, got {type(key)}."
+                )
+            if not isinstance(value, ParamInfo):
+                raise TypeError(
+                    f"Invalid value for '{key}': must be a ParamInfo object, got {type(value)}."
+                )
+    
+        self._param_group = param_group
+
+    def get_param_names(self, flatten = False) -> list[str]:
+        """ 
+        Return a list of parameter names in alphabetical order.
 
         Parameters
         ----------
-        param_info : `Dict`
-            Nested dictionary storing information for all parameters in the group.
-            Outer keys are parameter names and values are dictionaries containing
-            paramater metadata. The inner keys must have "type", "constraint", "shape".
-        """
-        self._param_info = param_info 
-
-    def get_param_names(self, flatten=False):
-        """ Return list of parameter names in alphabetical order.
-
-        Parameters
-        ----------
-        include_arr_names : `bool`
-            If False, then list consists of the set of keys in `self._param_info`.
+        flatten : bool, optional
+            If False, then list consists of the set of keys in `self._param_group`.
             If True, then the individual elements of array-valued parameters are included.
+            
+        Returns 
+        -------
+        list[str]
+            A sorted list of parameter names. 
+            
         """
         if flatten:
             raise NotImplementedError()
-        else:
-            return sorted(list(self._param_info.keys()))
+        return sorted(list(self._param_group.keys()))
 
-    def add_param(self, param_name, param_metadata):
-        """ Add a single new parameter to the group.
+    def add_param(self, param_name: str, param_metadata: ParamInfo) -> None:
+        """ 
+        Add a single new parameter to the group.
 
         Parameters
         ----------
-        param_name : `str`
+        param_name : str
             The new parameter name.
-        param_metadata : `Dict`
-            The parameter information dictionary for a new parameter.
+        param_metadata : ParamInfo
+            The parameter information object.
+            
+        Raises
+        ------
+        TypeError 
+            If `param_name` is not a string or `param_metadata` is not a `ParamInfo` instance. 
+        KeyError 
+            If the parameter already exists in the group. 
         """
-        if param_name in self._param_info:
+        if not isinstance(param_name, str):
+            raise TypeError("param_name must be a string.")
+        if not isinstance(param_metadata, ParamInfo):
+            raise TypeError("param_metadata must be an instance of ParamInfo.")
+        if param_name in self._param_group:
             raise KeyError(f"Parameter '{param_name}' already exists in the group.")
-        self._param_info[param_name] = param_metadata
+            
+        self._param_group[param_name] = param_metadata
 
-    def remove_param(self, param_names):
-        """ Remove one or more parameters from the group by name.
+    def remove_param(self, param_names: str | list[str] | tuple[str]) -> None:
+        """ 
+        Remove one or more parameters from the group by name.
 
         Parameters
         ----------
         param_names : `str`, `list`, or `tuple`
             The parameter name(s) to remove.
+            
+        Raises
+        ------
+        TypeError
+            If `param_names` is not a string, list, or tuple.
+        KeyError
+            If any parameter in `param_names` does not exist.
         """
         if isinstance(param_names, str):
             param_names = [param_names]
@@ -275,9 +350,98 @@ class ParamGroup:
             raise TypeError("param_names must be a string, list, or tuple.")
 
         for param_name in param_names:
-            if param_name not in self._param_info:
+            if param_name not in self._param_group:
                 raise KeyError(f"Parameter '{param_name}' does not exist in the group.")
-            self._param_info.pop(param_name)
+            self._param_group.pop(param_name)
+    
+    def __len__(self) -> int:
+        """
+        Returns the total number of individual scalar values across all 
+        parameters in the group. Calculated as sum(prod(shape of each parameter)).
+        
+        Notes
+        -----
+        This method relies on `ParamInfo.__len__()` which calculates the 
+        number of elements based on the shape of the parameter. 
+        
+        Returns 
+        -------
+        int
+            The total number of scalar elements across all parameters.
+        """
+        return sum(len(param_info) for param_info in self._param_group.values())
+    
+    def __str__(self) -> str:
+        """
+        Returns a tabular string representation of the ParamGroup.
+    
+        The table includes the following columns:
+            1) Parameter Name
+            2) Value Type
+            3) Shape
+            4) Constraint
+
+        Returns
+        -------
+        str
+            A formatted table string representing the parameter group.    
+        """
+        if not self._param_group:
+            return "ParamGroup is empty."
+    
+        # Define table headers
+        headers: list[str] = ["Parameter Name", "Type", "Shape", "Constraint"]
+        
+        # Collect row data
+        rows:list[list[str]] = []
+        for name, param in self._param_group.items():
+            rows.append([name, param.value_type, param.shape, param.constraint])
+    
+        # Determine column widths
+        col_widths: list[int] = [max(len(str(item)) for item in col) for col in zip(headers, *rows)]
+    
+        # Format header row
+        header_row = " | ".join(f"{h:<{col_widths[i]}}" for i, h in enumerate(headers))
+        separator = "-|-".join("-" * col_widths[i] for i in range(len(headers)))
+    
+        # Format data rows
+        formatted_rows = [" | ".join(f"{str(row[i]):<{col_widths[i]}}" 
+                                     for i in range(len(headers))) for row in rows]
+    
+        # Combine into final table format
+        return "\n".join([header_row, separator] + formatted_rows)
+    
+    def __eq__(self, other) -> bool:
+        """
+        Overloads the '==' operator to test for equality between two ParamGroup objects.
+    
+        Two ParamGroup instances are considered equal if:
+            1) They have the same set of parameter names.
+            2) Each parameter has the same value type, shape, and constraint.
+    
+        Parameters
+        ----------
+        other : object
+            Another ParamGroup instance to compare against.
+            
+        Returns
+        -------
+        bool
+            True if both ParamGroup instances are identical in structure and values, False otherwise.
+        """
+        if not isinstance(other, ParamGroup):
+            return NotImplemented  # Returns False if not ParamGroup
+    
+        # Check if they have the same set of parameter names
+        if set(self.get_param_names()) != set(other.get_param_names()):
+            return False
+    
+        # Check if all corresponding ParamInfo objects are identical
+        for key in self.get_param_names():  
+            if self._param_group[key] != other._param_group[key]:  
+                return False
+    
+        return True
 
 
 
