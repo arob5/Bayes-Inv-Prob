@@ -148,7 +148,7 @@ class ParamInfo:
 
         # Validate dependencies across type, shape, constraint.
         if constraint == "psd":
-            if not self.is_square_matrix(shape):
+            if not ParamInfo.is_square_matrix(shape):
                 raise ValueError("Constraint 'psd' only valid for square matrix.")
 
         if constraint == "simplex":
@@ -278,7 +278,6 @@ class ParamGroup:
             if param_name not in self.param_info:
                 raise KeyError(f"Parameter '{param_name}' does not exist in the group.")
             self.param_info.pop(param_name)
-
 
 
 class ParamValue:
