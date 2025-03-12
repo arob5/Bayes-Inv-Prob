@@ -102,7 +102,7 @@ class ParamInfo:
 
         self._validate_value_type(val)
         self._validate_value_shape(val)
-        # self._validate_value_constraint(val)
+        self._validate_value_constraint(val)
 
     def _validate_type(self):
         value_type = self.value_type
@@ -140,7 +140,7 @@ class ParamInfo:
 
         # Validate dependencies across type, shape, constraint.
         if constraint == "psd":
-            if not ParamInfo.is_square_matrix(shape):
+            if not ParamInfo.is_square_matrix_shape(shape):
                 raise ValueError("Constraint 'psd' only valid for square matrix.")
 
         if constraint == "simplex":
@@ -184,11 +184,32 @@ class ParamInfo:
             raise TypeError(f"Param has shape {required_shape}, but value has shape {val.shape}")
 
     def _validate_value_constraint(self, val):
-        return NotImplementedError
+        constraint = self.constraint
+        if ParamInfo.is_bound_constraint(constraint):
+            self._check_value_satisfies_bounds(val)
+        elif constraint == "psd":
+            ParamInfo.check_value_is_psd(val)
+        elif constraint == "simplex":
+            ParamInfo.check_value_in_simplex(val)
 
-    @staticmethod
-    def is_bound_constraint(constraint):
-        return isinstance(constraint, tuple)
+    def _check_value_satisfies_bounds(self, val):
+        bounds = self.constraint
+        if not ParamInfo.is_bound_constraint(bounds):
+            return None
+
+        lower, upper = bounds
+
+        if lower is not None:
+            n_lower_bound_violations = (val < lower).sum()
+            if n_lower_bound_violations > 0:
+                raise ValueError(f"Value has {n_lower_bound_violations}"
+                                 " lower bound violation(s).")
+
+        if upper is not None:
+            n_upper_bound_violations = (val > upper).sum()
+            if n_upper_bound_violations > 0:
+                raise ValueError(f"Value has {n_upper_bound_violations}"
+                                 " upper bound violation(s).")
 
     def _simplify_info(self):
         # At present, simplfications can only be made for bound constraints.
@@ -213,6 +234,62 @@ class ParamInfo:
         # Update constraint attribute.
         self._constraint = bounds
 
+    @staticmethod
+    def check_value_is_psd(val):
+        if not ParamInfo.is_psd_matrix(val):
+            raise ValueError("Value violates positive semidefinite constraint.")
+
+    @staticmethod
+    def check_value_in_simplex(val):
+        n_zero_violations = (val < 0.0).sum()
+        if n_zero_violations > 0:
+            raise ValueError(f"Array has {n_zero_violations} element(s)"
+                             " less than zero.")
+
+        n_one_violations = (val > 1.0).sum()
+        if n_one_violations > 0:
+            raise ValueError(f"Array has {n_one_violations} element(s)"
+                             " exceeding one.")
+
+        if not np.isclose(val.sum()-1, 0.0, atol=1e-08):
+            raise ValueError("Violation of simplex sum-to-one constraint.")
+
+    @staticmethod
+    def is_bound_constraint(constraint):
+        return isinstance(constraint, tuple)
+
+    @staticmethod
+    def is_matrix_shape(shape):
+        return len(shape) == 2
+
+    @staticmethod
+    def is_square_matrix_shape(shape):
+        if not ParamInfo.is_matrix_shape(shape):
+            return False
+
+        return shape[0] == shape[1]
+
+    @staticmethod
+    def is_symmetric_matrix(A):
+        return np.array_equal(A, A.T)
+
+    @staticmethod
+    def is_psd_matrix(A):
+        """
+        Some useful sources:
+        https://scicomp.stackexchange.com/questions/12979/testing-if-a-matrix-is-positive-semi-definite
+        https://stackoverflow.com/questions/16266720/find-out-if-a-matrix-is-positive-definite-with-numpy
+        """
+
+        if ParamInfo.is_symmetric_matrix(A):
+            try:
+                np.linalg.cholesky(A)
+                return True
+            except np.linalg.LinAlgError:
+                return False
+        else:
+            return False
+
     def __str__(self):
         constraint = self.constraint
         if constraint is NoConstraint:
@@ -228,18 +305,6 @@ class ParamInfo:
             return 1
 
         return np.prod(self.shape)
-
-    @staticmethod
-    def is_matrix(shape):
-        return len(shape) == 2
-
-    @staticmethod
-    def is_square_matrix(shape):
-        if not ParamInfo.is_matrix(shape):
-            return False
-
-        return shape[0] == shape[1]
-
 
     def __eq__(self, other):
         """
@@ -538,11 +603,12 @@ class ParamGroupValues:
             Dictionary storing the initial values. Keys are parameter names and
             values are the parameter values.
         """
-        self._param_group = param_group
-        self._value = {} # Initialize internal storage of parameter values
 
-        if init_values is not None:
-            self.value = init_values # Call the setter to validate init_values
+        if init_values == {}:
+            init_values = None
+
+        self._param_group = param_group
+        self.value = init_values
 
     @property
     def value(self):
@@ -586,8 +652,7 @@ class ParamGroupValues:
 
         # Validate value for each parameter in the group.
         for name, val in candidate_values:
-            self._validate_param_value(name, val)
-
+            self._param_group[name].validate_value(val)
 
     def _validate_param_names(self, candidate_values: dict):
         """
