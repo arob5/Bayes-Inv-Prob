@@ -33,16 +33,18 @@ NoConstraint = object.__new__(_NoConstraintType)
 class ParamInfo:
     """
     This class encapsulates metadata for a parameter, which includes its type,
-    shape, and constraints. It ensures that parameters conform to specified rules 
-    and enforces cross-parameter consistency. 
-    
+    shape, and constraints. It ensures that parameters conform to specified rules
+    and enforces cross-parameter consistency. The class attributes encoding
+    the parameter information are regarded as immutable; they should be set
+    when instantiating the class and not changed thereafter.
+
     `ParamInfo` objects are used when creating an instance of the `ParamGroup`
-    class. 
+    class.
     """
     def __init__(self,
                  value_type: str,
-                 shape: tuple[()] | tuple[int, ...], 
-                 constraint: str | tuple[int | None, int | None]): 
+                 shape: tuple[()] | tuple[int, ...],
+                 constraint: str | tuple[int | None, int | None]):
         """
 
         Parameters
@@ -67,15 +69,14 @@ class ParamInfo:
               must be in [0,1] and sum to one.
         """
 
-        # Initialize to None so that call to `_ensure_consistent_info` works.
-        self._value_type = None
-        self._shape = None
-        self._constraint = None
+        # Set parameter info.
+        self._value_type = value_type
+        self._shape = shape
+        self._constraint = constraint
 
-        # Call setters, which validate parameter info.
-        self.value_type = value_type
-        self.shape = shape
-        self.constraint = constraint
+        # Validate, and potentially simplify, parameter info.
+        self._validate_info()
+        self._simplify_info()
 
     @property
     def value_type(self):
@@ -89,67 +90,45 @@ class ParamInfo:
     def constraint(self):
         return self._constraint
 
-    @value_type.setter
-    def value_type(self, value_type):
-        ParamInfo._validate_value_type(value_type)
-        self._ensure_consistent_info(value_type=value_type)
-        self._value_type = value_type
+    def _validate_info(self):
+        self._validate_value_type()
+        self._validate_shape()
+        self._validate_constraint()
+        self._ensure_consistent_info()
 
-    @shape.setter
-    def shape(self, shape):
-        ParamInfo._validate_shape(shape)
-        self._ensure_consistent_info(shape=shape)
-        self._shape = shape
-
-    @constraint.setter
-    def constraint(self, constraint):
-        constraint = ParamInfo._validate_constraint(constraint)
-        self._ensure_consistent_info(constraint=constraint)
-        self._constraint = constraint
-
-    @staticmethod
-    def _validate_value_type(value_type):
+    def _validate_value_type(self):
+        value_type = self.value_type
         if not isinstance(value_type, str):
             raise TypeError(f"value_type must be a string, not {type(value_type)}.")
 
         if value_type not in ("float", "int"):
             raise ValueError(f"value_type must equal 'float' or 'int', got {value_type}.")
 
-    @staticmethod
-    def _validate_shape(shape):
+    def _validate_shape(self):
+        shape = self.shape
         if not isinstance(shape, tuple):
             raise TypeError(f"shape must be a tuple, not {type(shape)}.")
 
         if not all([isinstance(x, int) for x in shape]):
             raise TypeError("shape tuple must only contain integers.")
 
-    @staticmethod
-    def _validate_constraint(constraint):
+    def _validate_constraint(self):
+        constraint = self.constraint
         if not isinstance(constraint, (str, tuple)) and constraint is not NoConstraint:
             raise TypeError("constraint must either be NoConstraint, a string,"
-                            f"or a tuple, not {type(constraint)}.")
+                            f" or a tuple, not {type(constraint)}.")
 
-        if isinstance(constraint, tuple): # Bound constraint
-            constraint = ParamInfo._validate_bound_constraint(constraint)
+        if ParamInfo.is_bound_constraint(constraint): # Bound constraint
+            constraint = self._validate_bound_constraint()
         elif isinstance(constraint, str): # Non-bound constraint
             if not constraint in ("psd", "simplex"):
                 raise ValueError("If constraint is string, must be 'psd' or"
                                  f" 'simplex', got {constraint}.")
 
-        return constraint
-
-    def _ensure_consistent_info(self, value_type=None, shape=None, constraint=None):
-        # TODO: need to grab the current values of any params that aren't set.
-        # But also need to handle the case that they haven't been set yet.
-
-        # If only on piece of info is being changed, select the current values
-        # for the other pieces of info.
-        if value_type is None:
-            value_type = self.value_type
-        if shape is None:
-            shape = self.shape
-        if constraint is None:
-            constraint = self.constraint
+    def _ensure_consistent_info(self):
+        value_type = self.value_type
+        shape = self.shape
+        constraint = self.constraint
 
         # Validate dependencies across type, shape, constraint.
         if constraint == "psd":
@@ -160,8 +139,10 @@ class ParamInfo:
             if value_type != "float":
                 raise ValueError("Constraint 'simplex' requires 'float' value_type.")
 
-    @staticmethod
-    def _validate_bound_constraint(constraint):
+    def _validate_bound_constraint(self):
+        constraint = self.constraint
+        if not ParamInfo.is_bound_constraint(constraint):
+            return None
 
         if len(constraint) != 2:
             raise TypeError("If constraint is a tuple, must be length 2 "
@@ -172,11 +153,23 @@ class ParamInfo:
                             "None, or of type Int or Float.")
 
         lower, upper = constraint
-
         if (lower is not None) and (upper is not None):
             if lower > upper:
                 raise ValueError(f"Invalid bound constraint ({lower}, {upper})."
                                   " Lower bound exceeds upper bound.")
+
+    @staticmethod
+    def is_bound_constraint(constraint):
+        return isinstance(constraint, tuple)
+
+    def _simplify_info(self):
+        # At present, simplfications can only be made for bound constraints.
+
+        constraint = self.constraint
+        if not ParamInfo.is_bound_constraint(constraint):
+            return None
+
+        lower, upper = constraint
 
         # Convert infinite bounds to None.
         if (lower is not None) and math.isinf(lower):
@@ -189,8 +182,8 @@ class ParamInfo:
         if (lower is None) and (upper is None):
             bounds = NoConstraint
 
-        return bounds
-
+        # Update constraint attribute.
+        self._constraint = bounds
 
     def __str__(self):
         constraint = self.constraint
@@ -218,37 +211,36 @@ class ParamInfo:
             return False
 
         return shape[0] == shape[1]
-    
-    
+
+
     def __eq__(self, other):
         """
         Overloads the '==' operator to test for equality between two ParamInfo objects.
-    
+
         Two ParamInfo objects are considered equal if:
             1) They have the same `value_type`.
             2) They have the same `shape`.
             3) They have the same `constraint`.
-    
+
         Parameters
         ----------
         other : `ParamInfo`
             Another ParamInfo instance to compare against.
-    
+
         """
         if not isinstance(other, ParamInfo):
-            return NotImplemented  # Return False if not ParamInfo object 
-    
+            return NotImplemented  # Return False if not ParamInfo object
+
         return (self.value_type == other.value_type and
                 self.shape == other.shape and
                 self.constraint == other.constraint)
-
 
 
 class ParamGroup:
     """
     This is a container class that holds multiple parameter name-metadata pairs
     and provides functionality to view, add, and delete parameters.
-        
+
     """
 
     def __init__(self, param_group: dict[str, ParamInfo]):
@@ -256,18 +248,18 @@ class ParamGroup:
         Parameters
         ----------
         params : dict
-            Dictionary storing the name-metadata pairing of all the parameters 
-            in the group. The keys are the parameter names and the values 
-            are `ParamInfo` objects. 
-            
-        Raises 
+            Dictionary storing the name-metadata pairing of all the parameters
+            in the group. The keys are the parameter names and the values
+            are `ParamInfo` objects.
+
+        Raises
         ------
         TypeError
-            If `param_group` is not a dictionary with string keys and `ParamInfo` values. 
+            If `param_group` is not a dictionary with string keys and `ParamInfo` values.
         """
         if not isinstance(param_group, dict):
             raise TypeError("param_group must be a dictionary.")
-    
+
         for key, value in param_group.items():
             if not isinstance(key, str):
                 raise TypeError(
@@ -277,11 +269,11 @@ class ParamGroup:
                 raise TypeError(
                     f"Invalid value for '{key}': must be a ParamInfo object, got {type(value)}."
                 )
-    
+
         self._param_group = param_group
 
     def get_param_names(self, flatten = False) -> list[str]:
-        """ 
+        """
         Return a list of parameter names in alphabetical order.
 
         Parameters
@@ -289,19 +281,30 @@ class ParamGroup:
         flatten : bool, optional
             If False, then list consists of the set of keys in `self._param_group`.
             If True, then the individual elements of array-valued parameters are included.
-            
-        Returns 
+
+        Returns
         -------
         list[str]
-            A sorted list of parameter names. 
-            
+            A sorted list of parameter names.
+
         """
-        if flatten:
-            raise NotImplementedError()
-        return sorted(list(self._param_group.keys()))
+        param_names = sorted(list(self._param_group.keys()))
+        if not flatten:
+            return param_names
+
+        names_flat = []
+        for name in param_names:
+            info = self._param_group[name]
+            if len(info) == 1:
+                names_flat.append(name)
+            else:
+                subnames = ParamGroup.construct_arr_elem_names(info.shape, flatten=True)
+                names_flat += np.char.add(name, subnames).tolist()
+
+        return names_flat
 
     def add_param(self, param_name: str, param_metadata: ParamInfo) -> None:
-        """ 
+        """
         Add a single new parameter to the group.
 
         Parameters
@@ -310,13 +313,13 @@ class ParamGroup:
             The new parameter name.
         param_metadata : ParamInfo
             The parameter information object.
-            
+
         Raises
         ------
-        TypeError 
-            If `param_name` is not a string or `param_metadata` is not a `ParamInfo` instance. 
-        KeyError 
-            If the parameter already exists in the group. 
+        TypeError
+            If `param_name` is not a string or `param_metadata` is not a `ParamInfo` instance.
+        KeyError
+            If the parameter already exists in the group.
         """
         if not isinstance(param_name, str):
             raise TypeError("param_name must be a string.")
@@ -324,18 +327,18 @@ class ParamGroup:
             raise TypeError("param_metadata must be an instance of ParamInfo.")
         if param_name in self._param_group:
             raise KeyError(f"Parameter '{param_name}' already exists in the group.")
-            
+
         self._param_group[param_name] = param_metadata
 
     def remove_param(self, param_names: str | list[str] | tuple[str]) -> None:
-        """ 
+        """
         Remove one or more parameters from the group by name.
 
         Parameters
         ----------
         param_names : `str`, `list`, or `tuple`
             The parameter name(s) to remove.
-            
+
         Raises
         ------
         TypeError
@@ -353,28 +356,70 @@ class ParamGroup:
             if param_name not in self._param_group:
                 raise KeyError(f"Parameter '{param_name}' does not exist in the group.")
             self._param_group.pop(param_name)
-    
+
+    @staticmethod
+    def construct_arr_elem_names(shape: tuple[int], flatten: bool = False):
+        """
+        For a given array shape, constructs string names for each entry, where
+        the names are of the form of the expression that would be used to
+        select the entry when indexing the array; e.g., the (1,4,2) element of
+        a 3-dim array is given the name "[1,4,2]".
+
+        Examples
+        -----
+        construct_arr_elem_names((3,)) returns ["[0]", "[1]", "[2]"].
+        construct_arr_elem_names((2,2), flatten=True) returns
+        ["[0,0]", "[0,1]", "[1,0]", "[1,1]"].
+        construct_arr_elem_names(()) returns [].
+
+        Parameters
+        ----------
+        shape : `tuple`
+            The shape of the array.
+        flatten : `bool`
+            If False, returned array has shape `shape`. Otherwise, returned
+            array is flattened using `np.flatten`.
+
+        Returns
+        -------
+        np.ndarray[str]
+            The constructed names. See `flatten` above for the return
+            array dimension.
+        """
+        idcs = np.indices(shape).astype("str")
+        idx_names = np.char.add("[", idcs[0])
+
+        for i in range(1, idcs.shape[0]):
+            idx_names = np.char.add(idx_names, ",")
+            idx_names = np.char.add(idx_names, idcs[i])
+
+        idx_names = np.char.add(idx_names, "]")
+
+        if flatten:
+            return idx_names.flatten(order="C")
+        return(idx_names)
+
     def __len__(self) -> int:
         """
-        Returns the total number of individual scalar values across all 
+        Returns the total number of individual scalar values across all
         parameters in the group. Calculated as sum(prod(shape of each parameter)).
-        
+
         Notes
         -----
-        This method relies on `ParamInfo.__len__()` which calculates the 
-        number of elements based on the shape of the parameter. 
-        
-        Returns 
+        This method relies on `ParamInfo.__len__()` which calculates the
+        number of elements based on the shape of the parameter.
+
+        Returns
         -------
         int
             The total number of scalar elements across all parameters.
         """
         return sum(len(param_info) for param_info in self._param_group.values())
-    
+
     def __str__(self) -> str:
         """
         Returns a tabular string representation of the ParamGroup.
-    
+
         The table includes the following columns:
             1) Parameter Name
             2) Value Type
@@ -384,46 +429,49 @@ class ParamGroup:
         Returns
         -------
         str
-            A formatted table string representing the parameter group.    
+            A formatted table string representing the parameter group.
         """
         if not self._param_group:
             return "ParamGroup is empty."
-    
+
         # Define table headers
         headers: list[str] = ["Parameter Name", "Type", "Shape", "Constraint"]
-        
+
         # Collect row data
         rows:list[list[str]] = []
         for name, param in self._param_group.items():
-            rows.append([name, param.value_type, param.shape, param.constraint])
-    
+            constraint = param.constraint
+            if constraint is NoConstraint:
+                constraint = "NoConstraint" # For nicer print format.
+            rows.append([name, param.value_type, param.shape, constraint])
+
         # Determine column widths
         col_widths: list[int] = [max(len(str(item)) for item in col) for col in zip(headers, *rows)]
-    
+
         # Format header row
         header_row = " | ".join(f"{h:<{col_widths[i]}}" for i, h in enumerate(headers))
         separator = "-|-".join("-" * col_widths[i] for i in range(len(headers)))
-    
+
         # Format data rows
-        formatted_rows = [" | ".join(f"{str(row[i]):<{col_widths[i]}}" 
+        formatted_rows = [" | ".join(f"{str(row[i]):<{col_widths[i]}}"
                                      for i in range(len(headers))) for row in rows]
-    
+
         # Combine into final table format
         return "\n".join([header_row, separator] + formatted_rows)
-    
+
     def __eq__(self, other) -> bool:
         """
         Overloads the '==' operator to test for equality between two ParamGroup objects.
-    
+
         Two ParamGroup instances are considered equal if:
             1) They have the same set of parameter names.
             2) Each parameter has the same value type, shape, and constraint.
-    
+
         Parameters
         ----------
         other : object
             Another ParamGroup instance to compare against.
-            
+
         Returns
         -------
         bool
@@ -431,16 +479,16 @@ class ParamGroup:
         """
         if not isinstance(other, ParamGroup):
             return NotImplemented  # Returns False if not ParamGroup
-    
+
         # Check if they have the same set of parameter names
         if set(self.get_param_names()) != set(other.get_param_names()):
             return False
-    
+
         # Check if all corresponding ParamInfo objects are identical
-        for key in self.get_param_names():  
-            if self._param_group[key] != other._param_group[key]:  
+        for key in self.get_param_names():
+            if self._param_group[key] != other._param_group[key]:
                 return False
-    
+
         return True
 
 
