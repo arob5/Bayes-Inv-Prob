@@ -91,12 +91,20 @@ class ParamInfo:
         return self._constraint
 
     def _validate_info(self):
-        self._validate_value_type()
+        self._validate_type()
         self._validate_shape()
         self._validate_constraint()
         self._ensure_consistent_info()
 
-    def _validate_value_type(self):
+    def validate_value(self, val):
+        if not isinstance(val, np.ndarray):
+            raise TypeError(f"Value must be a numpy.ndarray, got {type(val)}")
+
+        self._validate_value_type(val)
+        self._validate_value_shape(val)
+        # self._validate_value_constraint(val)
+
+    def _validate_type(self):
         value_type = self.value_type
         if not isinstance(value_type, str):
             raise TypeError(f"value_type must be a string, not {type(value_type)}.")
@@ -157,6 +165,26 @@ class ParamInfo:
             if lower > upper:
                 raise ValueError(f"Invalid bound constraint ({lower}, {upper})."
                                   " Lower bound exceeds upper bound.")
+
+    def _validate_value_type(self, val):
+        required_type = self.value_type
+
+        if required_type == "float":
+            if not np.issubdtype(val.dtype, np.floating):
+                raise TypeError(f"Value must have numpy.floating dtype, not {val.dtype}")
+
+        if required_type == "int":
+            if not np.issubdtype(val.dtype, np.signedinteger):
+                raise TypeError(f"Value must have numpy.signedinteger dtype, not {val.dtype}")
+
+    def _validate_value_shape(self, val):
+        required_shape = self.shape
+
+        if val.shape != required_shape:
+            raise TypeError(f"Param has shape {required_shape}, but value has shape {val.shape}")
+
+    def _validate_value_constraint(self, val):
+        return NotImplementedError
 
     @staticmethod
     def is_bound_constraint(constraint):
@@ -492,27 +520,113 @@ class ParamGroup:
         return True
 
 
-class ParamValue:
+class ParamGroupValues:
     """
-    Encapsulates the actual value that a parameter can assume.
+    Encapsulates the actual value(s) that a parameter group (encoded by a
+    ParamGroup object) assumes. Includes validation to ensure the value aligns
+    with the type, shape, and constraints included in the ParamGroup. Can hold
+    multiple values at once.
     """
-    def __init__(self, param, init_values=None):
+    def __init__(self, param_group, init_values=None):
         """
 
         Parameters
         ----------
         param : `ParamGroup`
             Instance of ParamGroup class, defining the parameter structure.
-            This is helpful for validation purposes.
         init_values : `Dict`
             Dictionary storing the initial values. Keys are parameter names and
             values are the parameter values.
         """
-        self.param_group = param
+        self._param_group = param_group
         self._value = {} # Initialize internal storage of parameter values
 
         if init_values is not None:
             self.value = init_values # Call the setter to validate init_values
+
+    @property
+    def value(self):
+        return self._value
+
+    @value.setter
+    def value(self, new_values):
+        """
+        Validate and update parameter values.
+
+        Parameters
+        ----------
+        new_values : dict
+            Dictionary containing new parameter values to be set.
+        """
+        self._validate_values(new_values)  # Validate before setting
+        self._value = new_values  # Update internal storage
+
+    def _validate_values(self, candidate_values):
+        """
+        Validate given parameter values, which means checking that (1) the
+        values are given in a dictionary, with keys matching the _param_group
+        param names; (2) the value is of the correct type, shape, and satasfies
+        the constraints laid out by the ParamInfo objects stored in
+        _param_group.
+
+        Parameters
+        ----------
+        candidate_values : dict
+            Dictionary of parameter values to be validated before assignment.
+        """
+
+        # Empty value.
+        if (candidate_values == {}) or (candidate_values is None):
+            return None
+
+        if not isinstance(candidate_values, dict):
+            raise TypeError(f"candidate_values must be a dict, not {type(candidate_values)}.")
+
+        self._validate_param_names(candidate_values)
+
+        # Validate value for each parameter in the group.
+        for name, val in candidate_values:
+            self._validate_param_value(name, val)
+
+
+    def _validate_param_names(self, candidate_values: dict):
+        """
+        Validates the names of a dictionary containing parameter group values.
+        Ensures the set of dictionary keys is equal to the set of parameter
+        names in _param_group.
+
+        Parameters
+        ----------
+        candidate_values : `dict`
+            Dictionary of parameter values; only the keys are validated here.
+        """
+
+        candidate_names = set(candidate_values.keys())
+        param_names = set(self._param_group.get_param_names())
+
+        if candidate_names != param_names:
+            # Check for extra and/or missing parameters.
+            missing_names = expected_names - candidate_names
+            extra_names = candidate_names - expected_names
+            raise KeyError("Parameter name mismatch:\n"
+                           f"Missing names: {missing_names}\n"
+                           f"Extra names: {extra_names}")
+
+    def _validate_param_value(self, param_name, candidate_value):
+        """
+        Validates a candidate value of a single parameter within the param group.
+        In particular, checks against the value_type, shape, and constraint
+        attributes stored in the ParamInfo object for that parameter.
+
+        Parameters
+        ----------
+        param_name : `str`
+            A parameter name (one of the names in the param group).
+        candidate_value : `np.ndarray`
+            A candidate value for the parameter with name `param_name`.
+        """
+
+        self._param_group[param_name].validate_value(candidate_value)
 
     @staticmethod
     def _validate_keys(expected_names, candidate_names):
@@ -603,65 +717,6 @@ class ParamValue:
                     raise ValueError(
                         f"Parameter '{name}' must be at most {constraints['max']}. Got {value}."
                     )
-
-    def _validate_values(self, candidate_values):
-        """
-        Validate that the given values match the parameter group names and constraints.
-
-        Parameters
-        ----------
-        candidate_values : dict
-            Dictionary of parameter values to be validated before assignment.
-        """
-        expected_names = set(self.param_group.param_info.keys())
-        candidate_names = set(candidate_values.keys()) # Names in user-provided dict
-
-        self._validate_keys(expected_names, candidate_names)
-
-        # Iterate through parameter values and validate them
-        for name, value in candidate_values.items():
-
-            # Validate names
-            if name not in self.param_group.param_info:
-                raise KeyError(f"Parameter '{name}' metadata not found.")
-
-            param_meta = self.param_group.param_info[name] # Extract metadata of parameter
-
-            # Validate type
-            expected_type = param_meta["type"]
-            self._validate_type(name, value, expected_type)
-
-            # Validate shape and possibly convert single-element arrays to scalars
-            expected_shape = param_meta["shape"]
-            value = self._validate_shape(name, value, expected_shape)
-
-            # Validate constraints
-            constraints = param_meta.get("constraint", {})
-            self._validate_constraints(name, value, constraints)
-
-            # Update the candidate value in case it was modified (e.g., conversion from array to scalar)
-            candidate_values[name] = value
-
-    @property
-    def value(self):
-        return self._value
-
-    @value.setter
-    def value(self, new_values):
-        """
-        Validate and update parameter values.
-
-        Parameters
-        ----------
-        new_values : dict
-            Dictionary containing new parameter values to be set.
-        """
-        self._validate_values(new_values)  # Validate before setting
-        self._value = new_values  # Update internal storage
-
-    @value.deleter
-    def value(self):
-        del self._value
 
     def to_array(self):
         raise NotImplementedError()
