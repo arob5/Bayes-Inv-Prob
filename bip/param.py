@@ -6,7 +6,6 @@ Created on Fri Feb 21 01:01:39 2025
 @author: vigneshsomjit
 """
 import numpy as np
-import copy
 import math
 
 
@@ -91,12 +90,20 @@ class ParamInfo:
         return self._constraint
 
     def _validate_info(self):
+        """
+        Validates the parameter metadata by checking type, shape, constraint, 
+        and consistency across these attributes. 
+        """
         self._validate_type()
         self._validate_shape()
         self._validate_constraint()
         self._ensure_consistent_info()
 
     def validate_value(self, val):
+        """
+        Validates that a given NumPy array 'val' satisfies the type, shape, 
+        and constraint specified by this ParamInfo. 
+        """
         if not isinstance(val, np.ndarray):
             raise TypeError(f"Value must be a numpy.ndarray, got {type(val)}")
 
@@ -105,6 +112,10 @@ class ParamInfo:
         self._validate_value_constraint(val)
 
     def _validate_type(self):
+        """"
+        Checks that the value_type attribute is a string and is either 'float'
+        or `int`. 
+        """
         value_type = self.value_type
         if not isinstance(value_type, str):
             raise TypeError(f"value_type must be a string, not {type(value_type)}.")
@@ -113,6 +124,9 @@ class ParamInfo:
             raise ValueError(f"value_type must equal 'float' or 'int', got {value_type}.")
 
     def _validate_shape(self):
+        """
+        Ensures that the shape attribute is a tuple containing only integers. 
+        """
         shape = self.shape
         if not isinstance(shape, tuple):
             raise TypeError(f"shape must be a tuple, not {type(shape)}.")
@@ -121,6 +135,12 @@ class ParamInfo:
             raise TypeError("shape tuple must only contain integers.")
 
     def _validate_constraint(self):
+        """
+        Validates that the constraint attribute is either: 
+            - NoConstraint,
+            - a tuple (bound constraint),
+            - or a string ("psd" or "simplex").
+        """
         constraint = self.constraint
         if not isinstance(constraint, (str, tuple)) and constraint is not NoConstraint:
             raise TypeError("constraint must either be NoConstraint, a string,"
@@ -134,6 +154,11 @@ class ParamInfo:
                                  f" 'simplex', got {constraint}.")
 
     def _ensure_consistent_info(self):
+        """
+        Ensures consistency between the type, shape and constraint. 
+        For example, the 'psd' constraint is only valid for square matrices, 
+        and 'simpex' requires float values. 
+        """
         value_type = self.value_type
         shape = self.shape
         constraint = self.constraint
@@ -148,6 +173,11 @@ class ParamInfo:
                 raise ValueError("Constraint 'simplex' requires 'float' value_type.")
 
     def _validate_bound_constraint(self):
+        """
+        Validates a bound constraint tuple, ensuring it has two elements
+        that are numbers or None. Also checks that if both bounds are provided,
+        the lower bound is not greater than the upper bound. 
+        """
         constraint = self.constraint
         if not ParamInfo.is_bound_constraint(constraint):
             return None
@@ -167,6 +197,10 @@ class ParamInfo:
                                   " Lower bound exceeds upper bound.")
 
     def _validate_value_type(self, val):
+        """
+        Validates that the Numpy array 'val' has the correct data type as 
+        specified in value_type. 
+        """
         required_type = self.value_type
 
         if required_type == "float":
@@ -178,12 +212,18 @@ class ParamInfo:
                 raise TypeError(f"Value must have numpy.signedinteger dtype, not {val.dtype}")
 
     def _validate_value_shape(self, val):
+        """
+        Validates the shape of the Numpy array 'val' matches the expected shape. 
+        """
         required_shape = self.shape
 
         if val.shape != required_shape:
             raise TypeError(f"Param has shape {required_shape}, but value has shape {val.shape}")
 
     def _validate_value_constraint(self, val):
+        """
+        Validates that the Numpy array 'val' satisfies the specified constraint. 
+        """
         constraint = self.constraint
         if ParamInfo.is_bound_constraint(constraint):
             self._check_value_satisfies_bounds(val)
@@ -193,6 +233,10 @@ class ParamInfo:
             ParamInfo.check_value_in_simplex(val)
 
     def _check_value_satisfies_bounds(self, val):
+        """
+        For a bound constraint, checks each element of the Numpy array 'val' to ensure 
+        it does not violate the lower or upper bounds.
+        """
         bounds = self.constraint
         if not ParamInfo.is_bound_constraint(bounds):
             return None
@@ -294,11 +338,11 @@ class ParamInfo:
         constraint = self.constraint
         if constraint is NoConstraint:
             constraint = "NoConstraint"
-
-        return(f"value_type: {self.value_type}\n"
-               f"shape: {self.shape}\n"
-               f"constraint: {constraint}\n"
-               f"length: {len(self)}")
+            
+        return(f"ParamInfo<value_type: {self.value_type}, "
+               f"shape: {self.shape}, "
+               f"constraint: {constraint}, "
+               f"length: {len(self)}>")
 
     def __len__(self):
         if len(self.shape) == 0: # Empty tuple, implies scalar parameter.
@@ -651,7 +695,7 @@ class ParamGroupValues:
         self._validate_param_names(candidate_values)
 
         # Validate value for each parameter in the group.
-        for name, val in candidate_values:
+        for name, val in candidate_values.items():
             self._param_group[name].validate_value(val)
 
     def _validate_param_names(self, candidate_values: dict):
@@ -671,8 +715,8 @@ class ParamGroupValues:
 
         if candidate_names != param_names:
             # Check for extra and/or missing parameters.
-            missing_names = expected_names - candidate_names
-            extra_names = candidate_names - expected_names
+            missing_names = param_names - candidate_names
+            extra_names = candidate_names - param_names
             raise KeyError("Parameter name mismatch:\n"
                            f"Missing names: {missing_names}\n"
                            f"Extra names: {extra_names}")
@@ -693,95 +737,22 @@ class ParamGroupValues:
 
         self._param_group[param_name].validate_value(candidate_value)
 
-    @staticmethod
-    def _validate_keys(expected_names, candidate_names):
-        """
-        Validates that the number of parameter values given equal the number
-        of parameters in the parameter group.
-        """
-        # Check for extra parameters
-        extra_params = candidate_names - expected_names
-        if extra_params:
-            raise KeyError(f"Unexpected parameters in values: {extra_params}")
-        # Check for missing parameters
-        missing_params = expected_names - candidate_names
-        if missing_params:
-            raise KeyError(f"Missing values for parameters: {missing_params}")
-
-    @staticmethod
-    def _validate_type(name, value, expected_type):
-        """
-        Validates the type of the parameter value. Expected types include:
-            - Float
-            - Integer
-        """
-        # Float type
-        if expected_type == "float" and not isinstance(value, (float, np.ndarray)):
-            raise TypeError(f"Parameter '{name}' should be of type {expected_type}, got {type(value)}")
-        # Integer type
-        if expected_type == "int" and not isinstance(value, int):
-            raise TypeError(f"Parameter '{name}' should be of type {expected_type}, got {type(value)}")
-
-    @staticmethod
-    def _validate_shape(name, value, expected_shape):
-        """
-        Validates the shape of the parameter value: vector or scalar? If the value
-        is a single element numpy array for a scalar parameter, it converts it to a float.
-        """
-
-        # Vector paramater
-        if isinstance(expected_shape, tuple):
-            if not isinstance(value, np.ndarray):
-                raise TypeError(f"Parameter '{name}' should be a numpy array.")
-            if value.shape != expected_shape:
-                raise ValueError(
-                    f"Parameter '{name}' has incorrect shape. Expected {expected_shape} but got {value.shape}."
-                    )
-
-        # Scalar paramater
-        elif isinstance(expected_shape, int):
-            if isinstance(value, np.ndarray):
-                if value.shape == (1,):
-                    # Convert single-element numpy array to scalar
-                    value = float(value)
-                else:
-                    raise TypeError(
-                        f"Parameter '{name}' should be a scalar but got an array with shape {value.shape}."
-                        )
-        return value
-
-    @staticmethod
-    def _validate_constraints(name, value, constraints):
-        """
-        Validates constraints:
-            - Max?
-            - Min?
-            - PSD?
-            - Simplex?
-        """
-        if "min" in constraints:
-            if isinstance(value, (int, float)):
-                if value < constraints["min"]:
-                    raise ValueError(
-                        f"Parameter '{name}' must be at least {constraints['min']}. Got {value}."
-                        )
-            else:
-                if np.any(np.asarray(value) < constraints["min"]):
-                    raise ValueError(
-                        f"Parameter '{name}' must be at least {constraints['min']}. Got {value}."
-                        )
-
-        if "max" in constraints:
-            if isinstance(value, (int, float)):
-                if value > constraints["max"]:
-                    raise ValueError(
-                        f"Parameter '{name}' must be at most {constraints['max']}. Got {value}."
-                    )
-            else:
-                if np.any(np.asarray(value) > constraints["max"]):
-                    raise ValueError(
-                        f"Parameter '{name}' must be at most {constraints['max']}. Got {value}."
-                    )
-
     def to_array(self):
-        raise NotImplementedError()
+        """
+        Converts the stored parameter value into a single flattened 1D NumPy array.
+        """
+        # If no values are set, return an empty array.
+        if self.value is None:
+            return np.array([])
+
+        # Retrieve parameter names in sorted order.
+        param_names = self._param_group.get_param_names(flatten=False)
+        flattened_values = []
+
+        # Iterate over each parameter and flatten its value.
+        for name in param_names:
+            val = np.asarray(self.value[name]).flatten()
+            flattened_values.append(val)
+
+        # Concatenate all flattened arrays into one single 1D array.
+        return np.concatenate(flattened_values)
