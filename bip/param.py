@@ -8,6 +8,11 @@ Created on Fri Feb 21 01:01:39 2025
 import numpy as np
 import math
 
+def sort_mixed_types(l):
+    # Sorts a `list` or `dict_keys` that potentially contains mixed types
+    # (e.g, str and int). In the str/int case, the sorted integer keys will
+    # be placed first, followd by the sorted string keys.
+    return sorted(l, key=lambda x: (type(x).__name__, x))
 
 class _NoConstraintType(object):
     """
@@ -649,48 +654,61 @@ class ParamGroupValues:
         param : `ParamGroup`
             Instance of ParamGroup class, defining the parameter structure.
         init_values : `Dict`
-            Dictionary storing the initial values. Keys are parameter names and
-            values are the parameter values.
+            Dictionary storing the initial values. Each element of this
+            dictionary is a parameter value, which is itself encoded via
+            a dictionary. The inner dictionary has keys corresponding to
+            parameter names, and values the associated parameter values.
         """
 
         if init_values == {}:
             init_values = None
 
         self._param_group = param_group
-        self.value = init_values
+        self.values = init_values
 
     @property
     def param_group(self):
         return self._param_group
 
     @property
-    def value(self):
-        return self._value
+    def values(self):
+        return self._values
 
-    @value.setter
-    def value(self, new_values):
+    @values.setter
+    def values(self, new_values):
         """
         Validate and update parameter values.
 
         Parameters
         ----------
         new_values : dict
-            Dictionary containing new parameter values to be set.
+            Dictionary of dictionaries containing new parameter values to be
+            set. The outer dictionary is over the different parameter values,
+            with no constraints on the keys. The keys will commonly be integers
+            when there is a natural ordering (e.g., MCMC samples). Alternatively,
+            the keys can be strings. The inner dictionaries have keys equal to
+            the parameter names in the group, with values set to their associated
+            values.
         """
-        self._validate_values(new_values)  # Validate before setting
-        self._value = new_values  # Update internal storage
+        # Validate each provided value.
+        for val in new_values.values():
+            self._validate_value(val)
 
-    def _validate_values(self, candidate_values):
+        # If values are valid, update internal storage.
+        self._values = new_values
+
+    def _validate_value(self, candidate_values):
         """
         Validate given parameter values, which means checking that (1) the
         values are given in a dictionary, with keys matching the _param_group
         param names; (2) the value is of the correct type, shape, and satisfies
         the constraints laid out by the ParamInfo objects stored in
-        _param_group.
+        _param_group. Note that this method validates a single value of the
+        parameter group.
 
         Parameters
         ----------
-        candidate_values : dict
+        candidate_values : `dict`
             Dictionary of parameter values to be validated before assignment.
         """
 
@@ -748,24 +766,50 @@ class ParamGroupValues:
 
         self._param_group.param_group[param_name].validate_value(candidate_value)
 
-    def to_array(self):
+    def to_array(self, simplify=False):
         """
-        Converts the stored parameter value into a single flattened 1D NumPy
-        array. The array is ordered to align with the order of the parameter
-        names returned by `_param_group.get_param_names(flatten=True)`.
+        Converts the stored parameter value into a single flattened 2D NumPy
+        array (i.e., a matrix). The columns of the matrix are ordered to align
+        with the order of the parameter names returned by
+        `_param_group.get_param_names(flatten=True)`. Each row is a single
+        parameter group value, and the rows are ordered by applying
+        `sort_mixed_types` to the keys of the `self.values` dictionary. This
+        will sort integer keys in ascending order, and string keys
+        alphabetically ascending as well. A mixture of integer and string keys
+        will put the sorted integer keys first, followed by the sorted
+        string keys. All values are coerced to floats.
+
+        Parameters
+        ----------
+        simplify : `bool`
+            If True, then will simplify a one-row matrix to a 1d numpy array.
+            Otherwise, will maintain the 2d structure.
         """
         # If no values are set, return an empty array.
-        if self.value is None:
+        if self.values is None:
             return np.array([])
 
-        # Retrieve parameter names in sorted order.
-        param_names = self._param_group.get_param_names(flatten=False)
-        flattened_values = []
+        # Determine row order.
+        row_order = sort_mixed_types(self.values.keys())
 
-        # Iterate over each parameter and flatten its value.
-        for name in param_names:
-            val = np.asarray(self.value[name]).flatten()
-            flattened_values.append(val)
+        # Parameter order for columns. Multivariate parameters will be
+        # flattened.
+        param_names = self.param_group.get_param_names(flatten=False)
 
-        # Concatenate all flattened arrays into one single 1D array.
-        return np.concatenate(flattened_values)
+        # Matrix in which to store values.
+        n_vals = len(row_order)
+        mat = np.empty((n_vals, len(self.param_group)), dtype=float)
+
+        for row_idx, row_key in enumerate(row_order):
+            val_flat = []
+            for param_name in param_names:
+                param_val = np.asarray(self.values[row_key][param_name]).flatten()
+                val_flat.append(param_val)
+            mat[row_idx] = np.concatenate(val_flat)
+
+        # If there is only a single value, then optionally reduce the 1 row
+        # matrix to a 1d array.
+        if simplify and (n_vals == 1):
+            return mat[0]
+
+        return mat
