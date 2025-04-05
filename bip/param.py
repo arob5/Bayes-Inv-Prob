@@ -91,8 +91,8 @@ class ParamInfo:
 
     def _validate_info(self):
         """
-        Validates the parameter metadata by checking type, shape, constraint, 
-        and consistency across these attributes. 
+        Validates the parameter metadata by checking type, shape, constraint,
+        and consistency across these attributes.
         """
         self._validate_type()
         self._validate_shape()
@@ -101,9 +101,11 @@ class ParamInfo:
 
     def validate_value(self, val):
         """
-        Validates that a given NumPy array 'val' satisfies the type, shape, 
-        and constraint specified by this ParamInfo. 
+        Validates that a given NumPy array 'val' satisfies the type, shape,
+        and constraint specified by this ParamInfo.
         """
+        val = np.asarray(val)
+
         if not isinstance(val, np.ndarray):
             raise TypeError(f"Value must be a numpy.ndarray, got {type(val)}")
 
@@ -114,7 +116,7 @@ class ParamInfo:
     def _validate_type(self):
         """"
         Checks that the value_type attribute is a string and is either 'float'
-        or `int`. 
+        or `int`.
         """
         value_type = self.value_type
         if not isinstance(value_type, str):
@@ -125,7 +127,7 @@ class ParamInfo:
 
     def _validate_shape(self):
         """
-        Ensures that the shape attribute is a tuple containing only integers. 
+        Ensures that the shape attribute is a tuple containing only integers.
         """
         shape = self.shape
         if not isinstance(shape, tuple):
@@ -136,7 +138,7 @@ class ParamInfo:
 
     def _validate_constraint(self):
         """
-        Validates that the constraint attribute is either: 
+        Validates that the constraint attribute is either:
             - NoConstraint,
             - a tuple (bound constraint),
             - or a string ("psd" or "simplex").
@@ -155,9 +157,9 @@ class ParamInfo:
 
     def _ensure_consistent_info(self):
         """
-        Ensures consistency between the type, shape and constraint. 
-        For example, the 'psd' constraint is only valid for square matrices, 
-        and 'simpex' requires float values. 
+        Ensures consistency between the type, shape and constraint.
+        For example, the 'psd' constraint is only valid for square matrices,
+        and 'simpex' requires float values.
         """
         value_type = self.value_type
         shape = self.shape
@@ -176,7 +178,7 @@ class ParamInfo:
         """
         Validates a bound constraint tuple, ensuring it has two elements
         that are numbers or None. Also checks that if both bounds are provided,
-        the lower bound is not greater than the upper bound. 
+        the lower bound is not greater than the upper bound.
         """
         constraint = self.constraint
         if not ParamInfo.is_bound_constraint(constraint):
@@ -198,8 +200,8 @@ class ParamInfo:
 
     def _validate_value_type(self, val):
         """
-        Validates that the Numpy array 'val' has the correct data type as 
-        specified in value_type. 
+        Validates that the Numpy array 'val' has the correct data type as
+        specified in value_type.
         """
         required_type = self.value_type
 
@@ -213,7 +215,7 @@ class ParamInfo:
 
     def _validate_value_shape(self, val):
         """
-        Validates the shape of the Numpy array 'val' matches the expected shape. 
+        Validates the shape of the Numpy array 'val' matches the expected shape.
         """
         required_shape = self.shape
 
@@ -222,7 +224,7 @@ class ParamInfo:
 
     def _validate_value_constraint(self, val):
         """
-        Validates that the Numpy array 'val' satisfies the specified constraint. 
+        Validates that the Numpy array 'val' satisfies the specified constraint.
         """
         constraint = self.constraint
         if ParamInfo.is_bound_constraint(constraint):
@@ -234,7 +236,7 @@ class ParamInfo:
 
     def _check_value_satisfies_bounds(self, val):
         """
-        For a bound constraint, checks each element of the Numpy array 'val' to ensure 
+        For a bound constraint, checks each element of the Numpy array 'val' to ensure
         it does not violate the lower or upper bounds.
         """
         bounds = self.constraint
@@ -338,11 +340,10 @@ class ParamInfo:
         constraint = self.constraint
         if constraint is NoConstraint:
             constraint = "NoConstraint"
-            
+
         return(f"ParamInfo<value_type: {self.value_type}, "
                f"shape: {self.shape}, "
-               f"constraint: {constraint}, "
-               f"length: {len(self)}>")
+               f"constraint: {constraint}>")
 
     def __len__(self):
         if len(self.shape) == 0: # Empty tuple, implies scalar parameter.
@@ -409,7 +410,11 @@ class ParamGroup:
 
         self._param_group = param_group
 
-    def get_param_names(self, flatten = False) -> list[str]:
+    @property
+    def param_group(self):
+        return self._param_group
+
+    def get_param_names(self, flatten=False) -> list[str]:
         """
         Return a list of parameter names in alphabetical order.
 
@@ -655,6 +660,10 @@ class ParamGroupValues:
         self.value = init_values
 
     @property
+    def param_group(self):
+        return self._param_group
+
+    @property
     def value(self):
         return self._value
 
@@ -675,7 +684,7 @@ class ParamGroupValues:
         """
         Validate given parameter values, which means checking that (1) the
         values are given in a dictionary, with keys matching the _param_group
-        param names; (2) the value is of the correct type, shape, and satasfies
+        param names; (2) the value is of the correct type, shape, and satisfies
         the constraints laid out by the ParamInfo objects stored in
         _param_group.
 
@@ -696,7 +705,7 @@ class ParamGroupValues:
 
         # Validate value for each parameter in the group.
         for name, val in candidate_values.items():
-            self._param_group[name].validate_value(val)
+            self._validate_param_value(name, val)
 
     def _validate_param_names(self, candidate_values: dict):
         """
@@ -725,7 +734,9 @@ class ParamGroupValues:
         """
         Validates a candidate value of a single parameter within the param group.
         In particular, checks against the value_type, shape, and constraint
-        attributes stored in the ParamInfo object for that parameter.
+        attributes stored in the ParamInfo object for that parameter. This
+        is simply a light wrapper around the `validate_value` method of
+        the `ParamInfo` class.
 
         Parameters
         ----------
@@ -735,11 +746,13 @@ class ParamGroupValues:
             A candidate value for the parameter with name `param_name`.
         """
 
-        self._param_group[param_name].validate_value(candidate_value)
+        self._param_group.param_group[param_name].validate_value(candidate_value)
 
     def to_array(self):
         """
-        Converts the stored parameter value into a single flattened 1D NumPy array.
+        Converts the stored parameter value into a single flattened 1D NumPy
+        array. The array is ordered to align with the order of the parameter
+        names returned by `_param_group.get_param_names(flatten=True)`.
         """
         # If no values are set, return an empty array.
         if self.value is None:
