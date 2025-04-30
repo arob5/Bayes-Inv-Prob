@@ -696,7 +696,7 @@ class ParamGroupValues:
 
         # If values are valid, update internal storage.
         self._values = new_values
-
+        
     def _validate_value(self, candidate_values):
         """
         Validate given parameter values, which means checking that (1) the
